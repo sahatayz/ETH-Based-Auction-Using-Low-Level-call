@@ -10,12 +10,15 @@ contract Auction is Ownable {
 
     uint256 startTime;
     uint256 endTime;
+    bool ended;
 
     address highestBidder;
     uint256 highestBid;
     mapping(address => uint256) public bids;
 
-    //Emit BidPlaced, AuctionEnded, and FundsWithdrawn events.
+    event BidPlaced(address indexed bidder, uint256 bid);
+    event AuctionEnded(address indexed winner, uint256 amount);
+    event FundsWithdrawn(address indexed recipient, uint256 amount);
 
     constructor(
         uint256 _bidDuration,
@@ -37,36 +40,37 @@ contract Auction is Ownable {
     function placeBid() external payable {
         require(startTime <= block.timestamp);
         require(getTimeLeft() > 0, "Auction has ended.");
+        require(!ended, "Auction has ended.");
         require(msg.sender != address(0));
         require(msg.value > highestBid, "value < highest");
+        require(
+            msg.value - highestBid >= minBidAmount,
+            "The bid amount must be at least as much as the 'minBidAmount' of the previous bid."
+        );
+
+        if (highestBidder == address(0)) {
+            require(msg.value >= minBidAmount, "Below minimum bid");
+        }
 
         if (highestBidder != address(0)) {
             bids[highestBidder] += highestBid;
         }
 
-        // payable(highestBidder).transfer(highestBid);
         highestBidder = msg.sender;
         highestBid = msg.value;
-    }
 
-    // function placeBid(address bidder, uint value) internal
-    //         returns (bool success)
-    // {
-    //     if (value <= highestBid) {
-    //         return false;
-    //     }
-    //     if (highestBidder != address(0)) {
-    //         pendingReturns[highestBidder] += highestBid;
-    //     }
-    //     highestBid = value;
-    //     highestBidder = bidder;
-    //     return true;
-    // }
+        emit BidPlaced(highestBidder, highestBid);
+    }
 
     function withdraw() external {
         uint256 balance = bids[msg.sender];
+        require(balance > 0);
+
         bids[msg.sender] = 0;
-        payable(msg.sender).transfer(balance);
+        (bool success, ) = msg.sender.call{value: balance}("");
+        require(success, "Transfer failed.");
+
+        emit FundsWithdrawn(msg.sender, balance);
     }
 
     function getTimeLeft() public view returns (uint) {
@@ -76,5 +80,15 @@ contract Auction is Ownable {
 
     function getHighestBid() public view returns (uint) {
         return highestBid;
+    }
+
+    function endAuction() external onlyOwner {
+        require(getTimeLeft() == 0, "Auction has ended.");
+        ended = true;
+
+        (bool success, ) = sellerAddress.call{value: highestBid}("");
+        require(success, "Transfer failed.");
+
+        emit AuctionEnded(highestBidder, highestBid);
     }
 }
